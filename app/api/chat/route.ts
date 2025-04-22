@@ -3,6 +3,7 @@ import type { Message } from "ai";
 import { streamText } from "ai";
 import { prisma } from "@/lib/db";
 import { MenuItem } from "@/hooks/use-cart";
+import { z } from "zod";
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
@@ -14,13 +15,6 @@ export async function POST(req: Request) {
     },
   });
 
-  // Get the most popular items
-  const popularItems = menuItems
-    .sort((a: MenuItem, b: MenuItem) => b.popularity - a.popularity)
-    .slice(0, 3)
-    .map((item: MenuItem) => item.name)
-    .join(", ");
-
   // Format menu items for the AI context
   const menuItemsFormatted = menuItems
     .map(
@@ -31,45 +25,92 @@ export async function POST(req: Request) {
     )
     .join("\n");
 
-  // Create a system prompt with instructions and menu information
   const systemPrompt = `
-You are an AI assistant for a restaurant called "Tasty Bites". Your job is to help customers with their orders and answer questions about the menu.
-
-RESTAURANT MENU:
-${menuItemsFormatted}
-
-POPULAR ITEMS:
-The most popular items are: ${popularItems}
-
-CAPABILITIES:
-1. You can recommend menu items based on customer preferences
-2. You can add items to the customer's cart
-3. You can help customers complete their order
-
-INSTRUCTIONS:
-- Be friendly, helpful, and conversational
-- If a customer wants to order something, you can add it to their cart by including a JSON command in your response
-- To add an item to the cart, include this JSON block in your response:
-\`\`\`json
-{"type": "addToCart", "item": {"id": "item_id", "name": "Item Name", "price": 10.99, "image": "https://images.pexels.com/photos/1639557/pexels-photo-1639557.jpeg", "description": "Item description", "category": "Category", "quantity": 1}}
-\`\`\`
-- To open the cart, include this JSON block:
-\`\`\`json
-{"type": "openCart"}
-\`\`\`
-- Make sure the item details match exactly with the menu items
-- If a customer asks what's popular or what's good, recommend the most popular items
-- If a customer asks about ingredients or allergies, provide accurate information based on the menu descriptions
-- Keep your responses concise and helpful
-
-Remember, your JSON commands will be processed by the system but won't be visible to the user.
-`;
+    You are an AI assistant for a restaurant called "Tasty Bites". Your job is to help customers explore the menu, make decisions, and complete their food orders.
+    
+    ===========================
+    RESTAURANT MENU:
+    ${menuItemsFormatted}
+    ===========================
+    
+    AVAILABLE TOOLS:
+    1. getPopularItems
+       - Description: Returns a list of the most popular menu items.
+       - When to call: When the customer asks for recommendations, what's good, or what’s popular.
+    
+    2. addToCart
+       - Description: Adds a specific menu item to the customer's cart.
+       - When to call: When the customer expresses intent to order, buy, or add an item to their cart.
+       - Input must match exactly with the menu item (name, size, options if applicable).
+       - Even if the customer doesn't specify the quantity, you should add 1 item to the cart.
+    
+    ===========================
+    YOUR CAPABILITIES:
+    - Recommend menu items based on the customer's preferences.
+    - Provide accurate details about ingredients or allergy information based on the menu.
+    - Assist customers in adding items to their cart and completing their order.
+    
+    ===========================
+    BEHAVIOR GUIDELINES:
+    - Always be friendly, helpful, and conversational.
+    - Respond in natural language, but take action using tool calls when appropriate.
+    - Never list popular items directly. Instead, call getPopularItems to retrieve them when asked.
+    - Never add to cart without clear user intent (e.g., “I want to order”, “Add that to my cart”, “I’ll take the burger”).
+    - Do not call getPopularItems unless the user explicitly asks for recommendations or popular items.
+    - Do not repeat popular items unless the user asks again.
+    - Ensure tool inputs are correct and match the exact menu entries (case-sensitive and options included).
+    - Keep your responses concise, informative, and friendly.
+    - Use tools only when their usage conditions are met.
+    
+    ===========================
+    EXAMPLES:
+    If a customer says: "What do you recommend?" → Call getPopularItems
+    If a customer says: "I'd like to order the Chicken Alfredo" → Call addToCart with "Chicken Alfredo"
+    If a customer says: "I want burger" → Call addToCart with "burger"
+    
+    Your primary goal is to provide a seamless and enjoyable ordering experience.
+    `;
 
   try {
-    const response = await streamText({
+    const response = streamText({
       model: google("gemini-1.5-flash"),
       prompt: messages.map((m: Message) => m.content).join("\n"),
       system: systemPrompt,
+      tools: {
+        getPopularItems: {
+          description: "list down the most popular items",
+          parameters: z.object({
+            count: z.number().optional().default(3),
+          }),
+          execute: async ({ count }) => {
+            const items = await prisma.menuItem.findMany({
+              orderBy: {
+                popularity: "desc",
+              },
+              take: count,
+            });
+            return items as MenuItem[];
+          },
+        },
+        addToCart: {
+          description: "add an item to the customer's cart",
+          parameters: z.object({
+            itemName: z.string(),
+            quantity: z.number().optional().default(1),
+          }),
+          execute: async ({ itemName, quantity }) => {
+            const item = await prisma.menuItem.findFirst({
+              where: {
+                name: itemName,
+              },
+            });
+            if (!item) {
+              throw new Error("Item not found");
+            }
+            return item;
+          },
+        },
+      },
     });
 
     return response.toDataStreamResponse();

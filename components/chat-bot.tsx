@@ -15,12 +15,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageCircle, X, Send } from "lucide-react";
 import { useCart, type MenuItem } from "@/hooks/use-cart";
 import { cn } from "@/lib/utils";
+import MenuItemChat from "./menu-item-chat";
+import ChatInput from "./bot/chat-input";
 
 export function ChatBot() {
   const [isOpen, setIsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { addToCart, setIsOpen: setCartOpen } = useCart();
+  const [toolCallId, setToolCallId] = useState<string | null>(null);
 
   const {
     messages,
@@ -30,11 +33,30 @@ export function ChatBot() {
     status,
     error,
     reload,
-  } = useChat({});
+  } = useChat({
+    maxSteps: 1,
+    async onToolCall({ toolCall }) {
+      if (toolCall.toolName === "addToCart") {
+        const item = toolCall.args;
+        console.log({ onToolCall: toolCall.toolCallId, item });
+      }
+    },
+    async onFinish(message) {
+      console.log({ onFinish: message });
+      message.parts?.map((part) => {
+        if (part.type === "tool-invocation") {
+          if (part.toolInvocation.toolName === "addToCart") {
+            console.log({ onFinish: part.toolInvocation.toolCallId });
+            if (part.toolInvocation.state === "result") {
+              const item = part.toolInvocation.result;
+              handleCartItem(item);
+            }
+          }
+        }
+      });
+    },
+  });
 
-  console.log({ error, messages });
-
-  // Scroll to bottom when messages change
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -48,32 +70,9 @@ export function ChatBot() {
     }
   }, [isOpen]);
 
-  // Parse JSON commands from the AI
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage.role === "assistant") {
-        try {
-          // Look for JSON commands in the message
-          const jsonRegex = /```json\n([\s\S]*?)\n```/g;
-          let match;
-          while ((match = jsonRegex.exec(lastMessage.content)) !== null) {
-            const jsonContent = match[1];
-            const command = JSON.parse(jsonContent);
-
-            // Handle different command types
-            if (command.type === "addToCart" && command.item) {
-              addToCart(command.item as MenuItem);
-            } else if (command.type === "openCart") {
-              setCartOpen(true);
-            }
-          }
-        } catch (e) {
-          console.error("Failed to parse JSON command:", e);
-        }
-      }
-    }
-  }, [messages, addToCart, setCartOpen]);
+  const handleCartItem = (item: MenuItem) => {
+    addToCart(item);
+  };
 
   return (
     <>
@@ -135,8 +134,49 @@ export function ChatBot() {
                             : "bg-muted"
                         )}
                       >
-                        {/* Replace JSON blocks with nothing in the displayed message */}
-                        {message.content.replace(/```json\n[\s\S]*?\n```/g, "")}
+                        {message.parts.map((part) => {
+                          switch (part.type) {
+                            case "text":
+                              return part.text;
+                            case "tool-invocation": {
+                              const callId = part.toolInvocation.toolCallId;
+                              const toolName = part.toolInvocation.toolName;
+                              switch (toolName) {
+                                case "getPopularItems": {
+                                  switch (part.toolInvocation.state) {
+                                    case "call":
+                                      return "Getting popular items...";
+                                    case "result":
+                                      if (
+                                        part.toolInvocation.result.length > 0
+                                      ) {
+                                        return part.toolInvocation.result.map(
+                                          (item: MenuItem) => (
+                                            <MenuItemChat
+                                              key={item.id}
+                                              item={item}
+                                            />
+                                          )
+                                        );
+                                      }
+                                      return JSON.stringify(
+                                        part.toolInvocation.result
+                                      );
+                                  }
+                                }
+                                case "addToCart": {
+                                  switch (part.toolInvocation.state) {
+                                    case "call":
+                                      return "Adding item to cart...";
+                                    case "result":
+                                      const result = part.toolInvocation.result;
+                                      return `${result.name} added to cart`;
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        })}
                       </div>
                     </div>
                   ))}
@@ -158,32 +198,19 @@ export function ChatBot() {
           </CardContent>
           {error && (
             <>
-              <div>An error occurred.</div>
+              <div className="text-center text-red-500">An error occurred.</div>
               <button type="button" onClick={() => reload()}>
                 Retry
               </button>
             </>
           )}
           <CardFooter className="border-t p-3">
-            <form
-              onSubmit={handleSubmit}
-              className="flex w-full items-center space-x-2"
-            >
-              <Input
-                ref={inputRef}
-                placeholder="Type your message..."
-                value={input}
-                onChange={handleInputChange}
-                className="flex-1"
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={status === "streaming" || !input.trim()}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+            <ChatInput
+              handleSubmit={handleSubmit}
+              handleInputChange={handleInputChange}
+              input={input}
+              inputRef={inputRef}
+            />
           </CardFooter>
         </Card>
       </div>
