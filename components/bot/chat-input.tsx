@@ -8,11 +8,13 @@ const ChatInput = ({
   handleInputChange,
   input,
   inputRef,
+  status,
 }: {
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   input: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  status: any;
 }) => {
   return (
     <form

@@ -210,6 +210,7 @@ export function ChatBot() {
               handleInputChange={handleInputChange}
               input={input}
               inputRef={inputRef}
+              status={status}
             />
           </CardFooter>
         </Card>
