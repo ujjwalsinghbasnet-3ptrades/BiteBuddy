@@ -23,7 +23,7 @@ export function ChatBot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { addToCart, setIsOpen: setCartOpen } = useCart();
-  const [toolCallId, setToolCallId] = useState<string | null>(null);
+  const handledToolCalls = useRef<Set<string>>(new Set());
 
   const {
     messages,
@@ -34,7 +34,9 @@ export function ChatBot() {
     error,
     reload,
   } = useChat({
-    maxSteps: 1,
+    body: {
+      cart: useCart().cart,
+    },
     async onToolCall({ toolCall }) {
       if (toolCall.toolName === "addToCart") {
         const item = toolCall.args;
@@ -45,11 +47,15 @@ export function ChatBot() {
       console.log({ onFinish: message });
       message.parts?.map((part) => {
         if (part.type === "tool-invocation") {
-          if (part.toolInvocation.toolName === "addToCart") {
-            console.log({ onFinish: part.toolInvocation.toolCallId });
-            if (part.toolInvocation.state === "result") {
+          const { toolCallId, toolName, state } = part.toolInvocation;
+
+          if (handledToolCalls.current.has(toolCallId)) return;
+
+          if (toolName === "addToCart") {
+            if (state === "result") {
               const item = part.toolInvocation.result;
               handleCartItem(item);
+              handledToolCalls.current.add(toolCallId);
             }
           }
         }
@@ -71,6 +77,7 @@ export function ChatBot() {
   }, [isOpen]);
 
   const handleCartItem = (item: MenuItem) => {
+    console.count("handleCartItem");
     addToCart(item);
   };
 
@@ -101,7 +108,7 @@ export function ChatBot() {
           <CardHeader className="bg-primary/5 border-b">
             <CardTitle className="text-lg flex items-center gap-2">
               <MessageCircle className="h-5 w-5" />
-              Restaurant Assistant
+              Tasty Bites
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -109,7 +116,7 @@ export function ChatBot() {
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-8">
                   <MessageCircle className="h-8 w-8 mb-2 opacity-50" />
-                  <p>Hi there! I'm your restaurant assistant.</p>
+                  <p>Hi there! I'm Tasty Bites.</p>
                   <p className="text-sm mt-1">
                     Ask me about our menu or place an order!
                   </p>
@@ -170,7 +177,7 @@ export function ChatBot() {
                                       return "Adding item to cart...";
                                     case "result":
                                       const result = part.toolInvocation.result;
-                                      return `${result.name} added to cart`;
+                                      return `${result.name} added to cart. \n`;
                                   }
                                 }
                               }
